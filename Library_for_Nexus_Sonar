@@ -1,0 +1,33 @@
+// vars/config.groovy
+
+// Define a map of common environment details
+def call(envName) {
+    def configMap = [:]
+
+    // --- Default/Common Configuration ---
+    configMap.nexus = [
+        releaseRepoId: 'maven-releases',
+        snapshotRepoId: 'maven-snapshots',
+        publicRepoUrl: 'http://your-nexus-server-common:8081/repository/maven-public/'
+    ]
+    configMap.sonarqube = [
+        serverName: 'SonarQubeServer', // This name must match the one in Jenkins global config
+        projectKey: "${env.JOB_NAME.toLowerCase().replaceAll(' ', '-')}", // Example: derive from job name
+        projectName: env.JOB_NAME,
+        projectVersion: "${env.BUILD_NUMBER}"
+    ]
+    configMap.browserDefaults = ['chrome', 'firefox', 'edge']
+
+
+    // --- Environment-Specific Overrides ---
+    if (envName == 'dev') {
+        configMap.nexus.publicRepoUrl = 'http://nexus-dev:8081/repository/maven-public/'
+        configMap.sonarqube.serverName = 'SonarQubeDevServer'
+    } else if (envName == 'prod') {
+        configMap.nexus.publicRepoUrl = 'http://nexus-prod:8081/repository/maven-public/'
+        configMap.sonarqube.serverName = 'SonarQubeProdServer'
+    }
+    // Add more environment-specific overrides as needed
+
+    return configMap
+}
