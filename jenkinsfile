@@ -1,0 +1,71 @@
+@Library('mySharedLibrary') _ // Load your global library
+
+pipeline {
+    agent any
+
+    parameters {
+        // Add a parameter to select the environment
+        choice(name: 'BUILD_ENVIRONMENT', choices: ['dev', 'prod'], description: 'Select the target deployment environment')
+        string(name: 'AUTOMATION_SUITE', defaultValue: 'RegressionSuite', description: 'Name of the Automation Suite XML file')
+        choice(name: 'BROWSER', choices: ['chrome', 'firefox', 'edge'], description: 'Select the browser for test execution')
+    }
+
+    // Access the environment-specific configuration
+    // The 'call' method in config.groovy is invoked with params.BUILD_ENVIRONMENT
+    def currentConfig = null
+
+    stages {
+        stage('Initialize Config') {
+            steps {
+                script {
+                    currentConfig = config.call(params.BUILD_ENVIRONMENT)
+                    echo "Running build for environment: ${params.BUILD_ENVIRONMENT}"
+                    echo "Nexus Public URL: ${currentConfig.nexus.publicRepoUrl}"
+                }
+            }
+        }
+
+        stage('Build and Deploy to Nexus') {
+            tools {
+                maven 'Maven 3.8.6'
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'nexus-credentials-id', usernameVariable: 'NEXUS_USERNAME', passwordVariable: 'NEXUS_PASSWORD')]) {
+                    withMaven(
+                        maven: 'Maven 3.8.6',
+                        options: [
+                            mirrorOf(id: 'nexus', url: "${currentConfig.nexus.publicRepoUrl}", mirrorOf: '*'),
+                            server(id: "${currentConfig.nexus.releaseRepoId}", username: "${NEXUS_USERNAME}", password: "${NEXUS_PASSWORD}"),
+                            server(id: "${currentConfig.nexus.snapshotRepoId}", username: "${NEXUS_USERNAME}", password: "${NEXUS_PASSWORD}")
+                        ]
+                    ) {
+                        sh 'mvn clean deploy -DskipTests'
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv(currentConfig.sonarqube.serverName) {
+                    sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar " +
+                       "-Dsonar.projectKey=${currentConfig.sonarqube.projectKey} " +
+                       "-Dsonar.projectName=\"${currentConfig.sonarqube.projectName}\" " +
+                       "-Dsonar.projectVersion=${currentConfig.sonarqube.projectVersion}"
+                }
+            }
+        }
+
+        stage('Quality Gate Check') {
+            steps {
+                waitForQualityGate abortPipeline: true, buildStability: true, credentialsId: 'your-sonarqube-token-credential-id'
+            }
+        }
+
+        stage('Run Automation Tests') {
+            steps {
+                sh "mvn clean package -DsuiteFile=\"${params.AUTOMATION_SUITE}.xml\" -DbrowserProperty=\"${params.BROWSER}\""
+            }
+        }
+    }
+}
